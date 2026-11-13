@@ -27,47 +27,55 @@ export async function POST(req: NextRequest) {
     { role: "user", content: message },
   ];
 
-  for (let iteration = 0; iteration < 4; iteration++) {
-    const response = await client.messages.create({
-      model: "claude-opus-5",
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools: [PROFIT_DATA_TOOL],
-      messages,
-    });
-
-    if (response.stop_reason === "refusal") {
-      return NextResponse.json(
-        { error: "The assistant declined to answer that question." },
-        { status: 200 }
-      );
-    }
-
-    const toolUses = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
-    );
-
-    if (toolUses.length === 0) {
-      const text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
-      return NextResponse.json({ reply: text });
-    }
-
-    messages.push({ role: "assistant", content: response.content });
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const toolUse of toolUses) {
-      const view = (toolUse.input as { view: string }).view;
-      const result = await runProfitDataTool(view);
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: toolUse.id,
-        content: JSON.stringify(result),
+  try {
+    for (let iteration = 0; iteration < 4; iteration++) {
+      const response = await client.messages.create({
+        model: "claude-opus-5",
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        tools: [PROFIT_DATA_TOOL],
+        messages,
       });
+
+      if (response.stop_reason === "refusal") {
+        return NextResponse.json(
+          { error: "The assistant declined to answer that question." },
+          { status: 200 }
+        );
+      }
+
+      const toolUses = response.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+      );
+
+      if (toolUses.length === 0) {
+        const text = response.content
+          .filter((b): b is Anthropic.TextBlock => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+        return NextResponse.json({ reply: text });
+      }
+
+      messages.push({ role: "assistant", content: response.content });
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const toolUse of toolUses) {
+        const view = (toolUse.input as { view: string }).view;
+        const result = await runProfitDataTool(view);
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolUse.id,
+          content: JSON.stringify(result),
+        });
+      }
+      messages.push({ role: "user", content: toolResults });
     }
-    messages.push({ role: "user", content: toolResults });
+  } catch (err) {
+    const detail = err instanceof Anthropic.APIError ? err.message : "Unexpected error.";
+    return NextResponse.json(
+      { error: `The AI backend couldn't complete this request: ${detail}` },
+      { status: 200 }
+    );
   }
 
   return NextResponse.json(
